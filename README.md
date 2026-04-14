@@ -1,99 +1,95 @@
-# OS Unit 3 - Banana (Memory Management)
+# Lightweight Multi-Container Runtime
 
-This project implements the Memory Management experiments from the Banana lab:
+This repository implements a Linux-based supervised multi-container runtime in C,
+with a kernel module for memory monitoring.
 
-- https://github.com/pestechnology/OS-U3-BANANA
+## Components
 
-## What Is Implemented
+- `engine.c`: user-space supervisor and CLI (`supervisor`, `start`, `run`, `ps`, `logs`, `stop`)
+- `monitor.c`: kernel module that tracks container memory and applies soft/hard limits
+- `monitor_ioctl.h`: shared ioctl interface between user-space and kernel-space
+- `cpu_hog.c`, `memory_hog.c`, `io_pulse.c`: workload binaries for testing
+- `environment-check.sh`: environment validation helper
+- `Makefile`: user-space + kernel-module build targets
 
-- Section 1: Virtual address space layout using code/data/bss/heap/stack addresses
-- Section 2: Demand paging with VmSize and VmRSS changes
-- Section 3: Page table present-bit observation through pagemap
-- Section 4: Copy-on-write behavior with fork and page-fault counts
-- Section 5: Dynamic vs static linking and shared libc mapping
-- Section 6: malloc behavior via brk vs mmap with strace
-- Section 7: External and internal fragmentation demonstration
-- Section 8: Swap pressure and process memory status
-- Section 9: Working set timing comparison
-- Section 10: Thrashing throughput benchmark under increasing memory pressure
+## Requirements
 
-## Project Files
-
-- layout.c
-- demand.c
-- pagemap.c
-- cow.c
-- hello.c
-- alloc_trace.c
-- fragment.c
-- swap_pressure.c
-- working_set.c
-- thrash.c
-- Makefile
-- run_sections.sh
-
-## Setup
-
-Platform: Linux (Ubuntu). If you are on Windows, use WSL2 Ubuntu or an Ubuntu VM.
+- Ubuntu Linux VM (kernel-module support required)
+- `build-essential`
+- `linux-headers-$(uname -r)`
 
 Install dependencies:
 
 ```bash
-cd <your-repository-folder>
-chmod +x run_sections.sh
-./run_sections.sh deps
+sudo apt update
+sudo apt install -y build-essential linux-headers-$(uname -r)
 ```
 
-Compile all programs:
+## Build
+
+Build user binaries only:
 
 ```bash
-./run_sections.sh build
+make ci
 ```
 
-## How To Run
-
-Run each section directly:
+Build user binaries + kernel module:
 
 ```bash
-./run_sections.sh 0
-./run_sections.sh 1
-./run_sections.sh 1-pie
-./run_sections.sh 2
-./run_sections.sh 2-perf
-./run_sections.sh 3
-./run_sections.sh 4
-./run_sections.sh 5
-./run_sections.sh 5-libc-share
-./run_sections.sh 6
-./run_sections.sh 7
-./run_sections.sh 8
-./run_sections.sh 8-safe
-./run_sections.sh 9-meminfo
-./run_sections.sh 9-small
-./run_sections.sh 9-large
-./run_sections.sh 10-safe
-./run_sections.sh swappiness
+make all
 ```
 
-Full stress run:
+## Quick Run
+
+1. Build and load kernel module:
 
 ```bash
-./run_sections.sh 10
+make all
+sudo insmod monitor.ko
+ls -l /dev/container_monitor
 ```
 
-For swap/thrashing monitoring in parallel:
+2. Prepare container root filesystems (example):
 
 ```bash
-# Terminal 1
-./run_sections.sh 8-vmstat
+mkdir -p rootfs-base
+wget https://dl-cdn.alpinelinux.org/alpine/v3.20/releases/x86_64/alpine-minirootfs-3.20.3-x86_64.tar.gz
+tar -xzf alpine-minirootfs-3.20.3-x86_64.tar.gz -C rootfs-base
+cp -a rootfs-base rootfs-alpha
+cp -a rootfs-base rootfs-beta
+```
 
-# Terminal 2
-./run_sections.sh 8
-./run_sections.sh 10-safe
+3. Copy workloads into each rootfs:
+
+```bash
+sudo cp memory_hog cpu_hog io_pulse rootfs-alpha/
+sudo cp memory_hog cpu_hog io_pulse rootfs-beta/
+```
+
+4. Start supervisor (terminal 1):
+
+```bash
+sudo ./engine supervisor ./rootfs-base
+```
+
+5. Run commands (terminal 2):
+
+```bash
+sudo ./engine start alpha ./rootfs-alpha /memory_hog --soft-mib 40 --hard-mib 64
+sudo ./engine start beta ./rootfs-beta /cpu_hog --nice 10
+sudo ./engine ps
+sudo ./engine logs alpha
+sudo ./engine stop alpha
+```
+
+6. Cleanup:
+
+```bash
+sudo rmmod monitor
+make clean
 ```
 
 ## Notes
 
-- Section 3 and some Section 5 commands require `sudo`.
-- 10-safe is recommended for laptop stability.
-- If static linking fails on your machine, install glibc static support packages.
+- This project is Linux VM oriented; kernel module testing is not supported in WSL.
+- `dmesg` shows soft/hard memory-limit monitor events from `monitor.ko`.

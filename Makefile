@@ -1,47 +1,41 @@
-CC = gcc
-CFLAGS = -O0 -Wall -Wextra -std=c11 -D_DEFAULT_SOURCE -D_POSIX_C_SOURCE=200809L
+obj-m += monitor.o
 
-TARGETS = layout layout_pie demand pagemap cow hello_dynamic hello_static alloc_trace fragment swap_pressure working_set thrash
+KDIR := /lib/modules/$(shell uname -r)/build
+PWD := $(shell pwd)
+# If you want host-built workload binaries to run directly inside an Alpine
+# rootfs, you can override this with WORKLOAD_LDFLAGS=-static when your
+# toolchain supports it.
+WORKLOAD_LDFLAGS ?= -static
 
-all: $(TARGETS)
+USER_TARGETS := engine memory_hog cpu_hog io_pulse
 
-layout: layout.c
-	$(CC) $(CFLAGS) -no-pie -o $@ $<
+all: $(USER_TARGETS) module
 
-layout_pie: layout.c
-	$(CC) $(CFLAGS) -o $@ $<
+ci: WORKLOAD_LDFLAGS =
+ci: $(USER_TARGETS)
 
-demand: demand.c
-	$(CC) $(CFLAGS) -o $@ $<
+module: monitor.ko
 
-pagemap: pagemap.c
-	$(CC) $(CFLAGS) -o $@ $<
+engine: engine.c monitor_ioctl.h
+	gcc -O2 -Wall -Wextra -o engine engine.c -lpthread
 
-cow: cow.c
-	$(CC) $(CFLAGS) -o $@ $<
+memory_hog: memory_hog.c
+	gcc -O2 -Wall $(WORKLOAD_LDFLAGS) -o memory_hog memory_hog.c
 
-hello_dynamic: hello.c
-	$(CC) $(CFLAGS) -o $@ $<
+cpu_hog: cpu_hog.c
+	gcc -O2 -Wall $(WORKLOAD_LDFLAGS) -o cpu_hog cpu_hog.c
 
-hello_static: hello.c
-	$(CC) $(CFLAGS) -static -o $@ $<
+io_pulse: io_pulse.c
+	gcc -O2 -Wall $(WORKLOAD_LDFLAGS) -o io_pulse io_pulse.c
 
-alloc_trace: alloc_trace.c
-	$(CC) $(CFLAGS) -o $@ $<
-
-fragment: fragment.c
-	$(CC) $(CFLAGS) -o $@ $<
-
-swap_pressure: swap_pressure.c
-	$(CC) $(CFLAGS) -o $@ $<
-
-working_set: working_set.c
-	$(CC) $(CFLAGS) -o $@ $<
-
-thrash: thrash.c
-	$(CC) $(CFLAGS) -o $@ $<
+monitor.ko: monitor.c monitor_ioctl.h
+	$(MAKE) -C $(KDIR) M=$(PWD) modules
 
 clean:
-	rm -f $(TARGETS)
+	if [ -d "$(KDIR)" ]; then $(MAKE) -C $(KDIR) M=$(PWD) clean; fi
+	rm -f $(USER_TARGETS) *.o *.mod *.mod.c *.symvers *.order
+	rm -f *.log
+	rm -rf logs
+	rm -f /tmp/mini_runtime.sock
 
-.PHONY: all clean
+.PHONY: all ci module clean
